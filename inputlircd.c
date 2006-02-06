@@ -32,8 +32,8 @@
 #include <fcntl.h>
 #include <errno.h>
 #include <signal.h>
-
-#define EX_FAIL 1
+#include <syslog.h>
+#include <pwd.h>
 
 #include "input.h"
 #include "names.h"
@@ -55,7 +55,8 @@ static client_t *clients = NULL;
 
 static int sockfd;
 
-static int key_min = 128;
+static int key_min = 88;
+static char *device = "/dev/lircd";
 
 static void *xalloc(size_t size) {
 	void *buf = malloc(size);
@@ -88,6 +89,7 @@ static void add_evdevs(int argc, char *argv[]) {
 }
 	
 static void add_unixsocket(void) {
+	struct sockaddr_un sa = {0};
 	sockfd = socket(AF_UNIX, SOCK_STREAM, 0);
 
 	if(sockfd < 0) {
@@ -95,19 +97,17 @@ static void add_unixsocket(void) {
 		exit(EX_OSERR);
 	}
 
-	struct sockaddr_un sa = {
-		.sun_family = AF_UNIX,
-		.sun_path = "/dev/lircd",
-	};
+	sa.sun_family = AF_UNIX;
+	strncpy(sa.sun_path, device, sizeof sa.sun_path - 1);
 
-	unlink(sa.sun_path);
+	unlink(device);
 
 	if(bind(sockfd, (struct sockaddr *)&sa, sizeof sa) < 0) {
-		fprintf(stderr, "Unable to bind AF_UNIX socket to /dev/lircd: %s\n", strerror(errno));
+		fprintf(stderr, "Unable to bind AF_UNIX socket to %s: %s\n", device, strerror(errno));
 		exit(EX_OSERR);
 	}
 
-	chmod(sa.sun_path, 0666);
+	chmod(device, 0666);
 
 	if(listen(sockfd, 3) < 0) {
 		fprintf(stderr, "Unable to listen on AF_UNIX socket: %s\n", strerror(errno));
@@ -123,9 +123,14 @@ static void processnewclient(void) {
 
 	if(newclient->fd < 0) {
 		free(newclient);
-		fprintf(stderr, "Error during accept(): %s\n", strerror(errno));
+		if(errno == ECONNABORTED || errno == EINTR)
+			return;
+		syslog(LOG_ERR, "Error during accept(): %s\n", strerror(errno));
 		exit(EX_OSERR);
 	}
+
+        int flags = fcntl(newclient->fd, F_GETFL);
+        fcntl(newclient->fd, F_SETFL, flags | O_NONBLOCK);
 
 	if(clients)
 		clients->next = newclient;
@@ -140,7 +145,7 @@ static void processevent(evdev_t *evdev) {
 	client_t *client, *prev;
 
 	if(read(evdev->fd, &event, sizeof event) != sizeof event) {
-		fprintf(stderr, "Error processing event from %s: %s\n", evdev->name, strerror(errno));
+		syslog(LOG_ERR, "Error processing event from %s: %s\n", evdev->name, strerror(errno));
 		exit(EX_OSERR);
 	}
 	
@@ -157,7 +162,6 @@ static void processevent(evdev_t *evdev) {
 
 	for(client = clients; client; client = client->next) {
 		if(write(client->fd, message, len) != len) {
-			fprintf(stderr, "Error sending event to client %d: %s\n", client->fd, strerror(errno));
 			close(client->fd);
 			client->fd = -1;
 		}
@@ -204,7 +208,9 @@ static void main_loop(void) {
 		fdset = permset;
 		
 		if(select(maxfd, &fdset, NULL, NULL, NULL) < 0) {
-			fprintf(stderr, "Error during select(): %s\n", strerror(errno));
+			if(errno == EINTR)
+				continue;
+			syslog(LOG_ERR, "Error during select(): %s\n", strerror(errno));
 			exit(EX_OSERR);
 		}
 
@@ -218,12 +224,36 @@ static void main_loop(void) {
 }
 
 int main(int argc, char *argv[]) {
-	if(argc <= 1) {
+	char *user = "nobody";
+	int opt;
+	bool foreground = false;
+
+        while((opt = getopt(argc, argv, "d:m:f")) != -1) {
+                switch(opt) {
+			case 'd':
+				device = strdup(optarg);
+				break;
+			case 'm':
+				key_min = atoi(optarg);
+				break;
+			case 'u':
+				user = strdup(optarg);
+				break;
+			case 'f':
+				foreground = true;
+				break;
+                        default:
+				fprintf(stderr, "Unknown option!\n");
+                                return EX_USAGE;
+                }
+        }
+
+	if(argc <= optind) {
 		fprintf(stderr, "Not enough arguments.\n");
 		return EX_USAGE;
 	}
 
-	add_evdevs(argc - 1, argv + 1);
+	add_evdevs(argc - optind, argv + optind);
 
 	if(!evdevs) {
 		fprintf(stderr, "Unable to open any event device!\n");
@@ -232,7 +262,21 @@ int main(int argc, char *argv[]) {
 
 	add_unixsocket();
 
-	daemon(0, 0);
+	struct passwd *pwd = getpwnam(user);
+	if(!pwd) {
+		fprintf(stderr, "Unable to resolve user %s!\n", user);
+		return EX_OSERR;
+	}
+
+	if(setgid(pwd->pw_gid) || setuid(pwd->pw_uid)) {
+		fprintf(stderr, "Unable to setuid/setguid to %s!\n", user);
+		return EX_OSERR;
+	}
+
+	if(!foreground)
+		daemon(0, 0);
+
+	syslog(LOG_INFO, "Started");
 
 	signal(SIGPIPE, SIG_IGN);
 

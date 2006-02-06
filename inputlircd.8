@@ -5,12 +5,16 @@
 .Nd zeroconf LIRC daemon using input event devices
 .Sh SYNOPSIS
 .Nm
+.Op Fl d Ar socket
+.Op Fl f
+.Op Fl m Ar keycode
+.Op Fl u Ar username
 .Ar device
-.Op Ar device ...
+.Op Ar device Li ...
 .Sh DESCRIPTION
 .Nm
 is a small LIRC daemon that reads from
-.Pa /dev/input/event*
+.Pa /dev/input/event Ns X
 devices and sends the received keycodes to connecting LIRC clients.
 .Nm
 needs no configuration,
@@ -21,7 +25,51 @@ should work out of the box.
 .Nm
 expects a list of input event devices as commandline parameters.
 It will only read events from those devices.
+.Sh OPTIONS
+.Bl -tag -width flag
+.It Fl d Ar socket
+Location of the UNIX socket to which LIRC clients can connect.
+The default is
+.Pa /dev/lircd .
+.It Fl f
+Run in the foreground.
+.It Fl m Ar keycode
+Minimum keycode to send to LIRC clients.
+Keycodes lower than this number are filtered out.
+The default is 88, this filters out the alphanumeric section and the keypad section of normal keyboards,
+but allows all extended keys.
+The rationale is that clients should not be able to grab normal keypresses, this could be a security risk.
+.It Fl u Ar username
+Set user and group id to that of
+Ar username
+after opening the devices and UNIX socket as root.
+The default is nobody.
+.It Ar device
+One or more input event devices.
+If you want to use
+.Nm
+to process multimedia keys on the keyboard,
+then
+.Pa /dev/input/event0
+is the most likely choice.
+If you have other input devices, such as USB remote controllers that act like a HID device,
+then you probably need one of the other event devices present.
+See
+.Pa /proc/bus/input/devices
+for a list of available input devices.
+If unsure, you can add all available input event devices.
+.El
+.Sh FILES
+.Bl -tag -width indent
+.It Pa /dev/lircd
+Default location of the UNIX socket to which LIRC clients can connect.
+.It Pa /dev/input/event Ns X
+The kernel input layer's event device files.
+.It Pa /proc/bus/input/devices
+List of all input devices.
+.El
 .Sh SEE ALSO
 .Xr irw 1 ,
 .Xr input-events 8 ,
+.Xr setkeycodes 8 ,
 .Pa /usr/include/linux/input.h .
