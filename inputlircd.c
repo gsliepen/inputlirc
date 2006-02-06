@@ -55,6 +55,8 @@ static client_t *clients = NULL;
 
 static int sockfd;
 
+static int key_min = 128;
+
 static void *xalloc(size_t size) {
 	void *buf = malloc(size);
 	if(!buf) {
@@ -137,7 +139,7 @@ static void processevent(evdev_t *evdev) {
 	int len;
 	client_t *client, *prev;
 
-	if(read(evdev->fd, &event, sizeof event) != sizeof event || event.code > KEY_MAX) {
+	if(read(evdev->fd, &event, sizeof event) != sizeof event) {
 		fprintf(stderr, "Error processing event from %s: %s\n", evdev->name, strerror(errno));
 		exit(EX_OSERR);
 	}
@@ -145,7 +147,7 @@ static void processevent(evdev_t *evdev) {
 	if(event.type != EV_KEY)
 		return;
 
-	if(!event.value)
+	if(!event.value || event.code > KEY_MAX || event.code < key_min)
 		return;
 
 	if(KEY_NAME[event.code])
