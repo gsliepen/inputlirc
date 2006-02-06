@@ -20,6 +20,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <unistd.h>
+#include <stdlib.h>
 #include <string.h>
 #include <libgen.h>
 #include <sys/types.h>
@@ -29,20 +30,67 @@
 #include <sysexits.h>
 #include <sys/stat.h>
 #include <fcntl.h>
+#include <errno.h>
+#include <signal.h>
 
 #define EX_FAIL 1
 
 #include "input.h"
 #include "names.h"
 
-int main(int argc, char *argv[]) {
-	char *remote = basename(strdup(argv[1]));
+typedef struct evdev {
+	char *name;
+	int fd;
+	struct evdev *next;
+} evdev_t;
+
+static evdev_t *evdevs = NULL;
+
+typedef struct client {
+	int fd;
+	struct client *next;
+} client_t;
+
+static client_t *clients = NULL;
+
+static int sockfd;
+
+static void *xalloc(size_t size) {
+	void *buf = malloc(size);
+	if(!buf) {
+		fprintf(stderr, "Could not allocate %zd bytes with malloc(): %s\n", size, strerror(errno));
+		exit(EX_OSERR);
+	}
+	memset(buf, 0, size);
+	return buf;
+}
+
+static void add_evdevs(int argc, char *argv[]) {
+	int i;
+	evdev_t *newdev;
+
+	for(i = 0; i < argc; i++) {
+		newdev = xalloc(sizeof *newdev);
+		newdev->fd = open(argv[i], O_RDONLY);
+		if(newdev->fd < 0) {
+			free(newdev);
+			fprintf(stderr, "Could not open %s: %s\n", argv[i], strerror(errno));
+			continue;
+		}
+		newdev->name = basename(strdup(argv[i]));
+		if(evdevs)
+			evdevs->next = newdev;
+		else
+			evdevs = newdev;
+	}
+}
 	
-	int sockfd = socket(AF_UNIX, SOCK_STREAM, 0);
+static void add_unixsocket(void) {
+	sockfd = socket(AF_UNIX, SOCK_STREAM, 0);
 
 	if(sockfd < 0) {
-		perror("socket");
-		return EX_FAIL;
+		fprintf(stderr, "Unable to create an AF_UNIX socket: %s\n", strerror(errno));
+		exit(EX_OSERR);
 	}
 
 	struct sockaddr_un sa = {
@@ -53,57 +101,140 @@ int main(int argc, char *argv[]) {
 	unlink(sa.sun_path);
 
 	if(bind(sockfd, (struct sockaddr *)&sa, sizeof sa) < 0) {
-		perror("bind");
-		return EX_FAIL;
+		fprintf(stderr, "Unable to bind AF_UNIX socket to /dev/lircd: %s\n", strerror(errno));
+		exit(EX_OSERR);
 	}
 
 	chmod(sa.sun_path, 0666);
 
 	if(listen(sockfd, 3) < 0) {
-		perror("listen");
-		return EX_FAIL;
+		fprintf(stderr, "Unable to listen on AF_UNIX socket: %s\n", strerror(errno));
+		exit(EX_OSERR);
+	}
+}
+
+
+static void processnewclient(void) {
+	client_t *newclient = xalloc(sizeof *newclient);
+
+	newclient->fd = accept(sockfd, NULL, NULL);
+
+	if(newclient->fd < 0) {
+		free(newclient);
+		fprintf(stderr, "Error during accept(): %s\n", strerror(errno));
+		exit(EX_OSERR);
 	}
 
-	int eventfd = open(argv[1], O_RDONLY);
+	if(clients)
+		clients->next = newclient;
+	else
+		clients = newclient;
+}
+	
+static void processevent(evdev_t *evdev) {
+	struct input_event event;
+	char message[1000];
+	int len;
+	client_t *client, *prev;
 
-	if(eventfd < 0) {
-		perror("open");
-		return EX_FAIL;
+	if(read(evdev->fd, &event, sizeof event) != sizeof event || event.code > KEY_MAX) {
+		fprintf(stderr, "Error processing event from %s: %s\n", evdev->name, strerror(errno));
+		exit(EX_OSERR);
+	}
+	
+	if(event.type != EV_KEY)
+		return;
+
+	if(!event.value)
+		return;
+
+	if(KEY_NAME[event.code])
+		len = snprintf(message, sizeof message, "%x %x %s %s\n", event.code, 0, KEY_NAME[event.code], evdev->name);
+	else
+		len = snprintf(message, sizeof message, "%x %x KEY_CODE_%d %s\n", event.code, 0, event.code, evdev->name);
+
+	for(client = clients; client; client = client->next) {
+		if(write(client->fd, message, len) != len) {
+			fprintf(stderr, "Error sending event to client %d: %s\n", client->fd, strerror(errno));
+			close(client->fd);
+			client->fd = -1;
+		}
 	}
 
-	int cfd = accept(sockfd, NULL, NULL);
-
-	if(cfd < 0) {
-		perror("accept");
-		return EX_FAIL;
+	for(prev = NULL, client = clients; client; client = client->next) {
+		if(client->fd < 0) {
+			if(prev)
+				prev->next = client->next;
+			else
+				clients = client->next;
+			free(client);
+			if(prev)
+				client = prev;
+			else
+				client = clients;
+		}
+		if(!client)
+			break;
 	}
+}
 
+static void main_loop(void) {
+	fd_set permset;
+	fd_set fdset;
+	evdev_t *evdev;
+	int maxfd = 0;
+
+	FD_ZERO(&permset);
+	
+	for(evdev = evdevs; evdev; evdev = evdev->next) {
+		FD_SET(evdev->fd, &permset);
+		if(evdev->fd > maxfd)
+			maxfd = evdev->fd;
+	}
+	
+	FD_SET(sockfd, &permset);
+	if(sockfd > maxfd)
+		maxfd = sockfd;
+
+	maxfd++;
+	
 	while(true) {
-		struct input_event event;
-
-		if(read(eventfd, &event, sizeof event) <= 0) {
-			perror("read");
-			return EX_FAIL;
-		}
+		fdset = permset;
 		
-		switch(event.type) {
-			case EV_KEY:
-				if(event.value) {
-					char buf[100];
-					int len = snprintf(buf, sizeof buf, "%x %x %s %s\n", event.code, 0, KEY_NAME[event.code], remote);
-					if(len <= 0) {
-						perror("snprintf");
-						return EX_FAIL;
-					}
-
-					if(write(cfd, buf, len) <= 0) {
-						perror("write");
-						return EX_FAIL;
-					}
-				}
-				break;
-			default:
-				break;
+		if(select(maxfd, &fdset, NULL, NULL, NULL) < 0) {
+			fprintf(stderr, "Error during select(): %s\n", strerror(errno));
+			exit(EX_OSERR);
 		}
+
+		for(evdev = evdevs; evdev; evdev = evdev->next)
+			if(FD_ISSET(evdev->fd, &fdset))
+				processevent(evdev);
+
+		if(FD_ISSET(sockfd, &fdset))
+			processnewclient();
 	}
+}
+
+int main(int argc, char *argv[]) {
+	if(argc <= 1) {
+		fprintf(stderr, "Not enough arguments.\n");
+		return EX_USAGE;
+	}
+
+	add_evdevs(argc - 1, argv + 1);
+
+	if(!evdevs) {
+		fprintf(stderr, "Unable to open any event device!\n");
+		return EX_OSERR;
+	}
+
+	add_unixsocket();
+
+	daemon(0, 0);
+
+	signal(SIGPIPE, SIG_IGN);
+
+	main_loop();
+
+	return 0;
 }

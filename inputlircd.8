@@ -1,0 +1,27 @@
+.Dd Mon, 06 Feb 2006 17:42:25 +0100
+.Dt INPUTLIRCD 8
+.Sh NAME
+.Nm inputlircd
+.Nd zeroconf LIRC daemon using input event devices
+.Sh SYNOPSIS
+.Nm
+.Ar device
+.Op Ar device ...
+.Sh DESCRIPTION
+.Nm
+is a small LIRC daemon that reads from
+.Pa /dev/input/event*
+devices and sends the received keycodes to connecting LIRC clients.
+.Nm
+needs no configuration,
+it uses the standardised names for the keycodes as used by the kernel.
+Many USB remote controls that present HID devices, as well as multimedia keyboards
+should work out of the box.
+.Pp
+.Nm
+expects a list of input event devices as commandline parameters.
+It will only read events from those devices.
+.Sh SEE ALSO
+.Xr irw 1 ,
+.Xr input-events 8 ,
+.Pa /usr/include/linux/input.h .
