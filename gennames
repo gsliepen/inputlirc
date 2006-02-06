@@ -1,0 +1,20 @@
+#!/bin/sh
+
+TYPES="KEY BTN"
+
+for type in $TYPES; do
+	grep "^#define ${type}_" < $1
+done
+
+grep "^#define EV_KEY" < $1
+grep "^#define KEY_MAX" < $1
+
+echo "static const char *KEY_NAME[KEY_MAX] = {"
+for type in $TYPES; do
+	awk "
+		/EV_VERSION/	{ next };
+		/_MAX/		{ next };
+		/#define ${type}_/	{ printf(\"\t[ %-16s ] = \\\"%s\\\",\n\", \$2, \$2); }
+	" < $1
+done
+echo "};"
