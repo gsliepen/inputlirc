@@ -19,9 +19,10 @@ MAN8 = inputlircd.8
 
 CC ?= gcc
 CFLAGS ?= -Wall -g -O2 -pipe
-PREFIX ?= /usr
+PREFIX ?= /usr/local
 INSTALL ?= install
 SBINDIR ?= $(PREFIX)/sbin
+SHAREDIR ?= $(PREFIX)/share
 MANDIR ?= $(SHAREDIR)/man
 
 all: $(SBIN)
