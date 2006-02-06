@@ -81,10 +81,8 @@ static void add_evdevs(int argc, char *argv[]) {
 			continue;
 		}
 		newdev->name = basename(strdup(argv[i]));
-		if(evdevs)
-			evdevs->next = newdev;
-		else
-			evdevs = newdev;
+		newdev->next = evdevs;
+		evdevs = newdev;
 	}
 }
 	
@@ -132,10 +130,8 @@ static void processnewclient(void) {
         int flags = fcntl(newclient->fd, F_GETFL);
         fcntl(newclient->fd, F_SETFL, flags | O_NONBLOCK);
 
-	if(clients)
-		clients->next = newclient;
-	else
-		clients = newclient;
+	newclient->next = clients;
+	clients = newclient;
 }
 	
 static void processevent(evdev_t *evdev) {
@@ -228,7 +224,7 @@ int main(int argc, char *argv[]) {
 	int opt;
 	bool foreground = false;
 
-        while((opt = getopt(argc, argv, "d:m:f")) != -1) {
+        while((opt = getopt(argc, argv, "d:m:fu:")) != -1) {
                 switch(opt) {
 			case 'd':
 				device = strdup(optarg);
