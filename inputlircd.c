@@ -138,7 +138,7 @@ static void processevent(evdev_t *evdev) {
 	struct input_event event;
 	char message[1000];
 	int len;
-	client_t *client, *prev;
+	client_t *client, *prev, *next;
 
 	if(read(evdev->fd, &event, sizeof event) != sizeof event) {
 		syslog(LOG_ERR, "Error processing event from %s: %s\n", evdev->name, strerror(errno));
@@ -163,20 +163,17 @@ static void processevent(evdev_t *evdev) {
 		}
 	}
 
-	for(prev = NULL, client = clients; client; client = client->next) {
+	for(prev = NULL, client = clients; client; client = next) {
+		next = client->next;
 		if(client->fd < 0) {
 			if(prev)
 				prev->next = client->next;
 			else
 				clients = client->next;
 			free(client);
-			if(prev)
-				client = prev;
-			else
-				client = clients;
+		} else {
+			prev = client;
 		}
-		if(!client)
-			break;
 	}
 }
 
