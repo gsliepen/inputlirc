@@ -23,6 +23,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <libgen.h>
+#include <sys/ioctl.h>
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <sys/un.h>
@@ -35,7 +36,7 @@
 #include <syslog.h>
 #include <pwd.h>
 
-#include "input.h"
+#include </usr/include/linux/input.h>
 #include "names.h"
 
 typedef struct evdev {
@@ -55,6 +56,7 @@ static client_t *clients = NULL;
 
 static int sockfd;
 
+static bool grab = false;
 static int key_min = 88;
 static char *device = "/dev/lircd";
 
@@ -79,6 +81,14 @@ static void add_evdevs(int argc, char *argv[]) {
 			free(newdev);
 			fprintf(stderr, "Could not open %s: %s\n", argv[i], strerror(errno));
 			continue;
+		}
+		if(grab) {
+			if(ioctl(newdev->fd, EVIOCGRAB, 1) < 0) {
+				close(newdev->fd);
+				free(newdev);
+				fprintf(stderr, "Failed to grab %s: %s\n", argv[i], strerror(errno));
+				continue;
+			}
 		}
 		newdev->name = basename(strdup(argv[i]));
 		newdev->next = evdevs;
@@ -221,10 +231,13 @@ int main(int argc, char *argv[]) {
 	int opt;
 	bool foreground = false;
 
-        while((opt = getopt(argc, argv, "d:m:fu:")) != -1) {
+        while((opt = getopt(argc, argv, "d:gm:fu:")) != -1) {
                 switch(opt) {
 			case 'd':
 				device = strdup(optarg);
+				break;
+			case 'g':
+				grab = true;
 				break;
 			case 'm':
 				key_min = atoi(optarg);

@@ -30,7 +30,7 @@ all: $(SBIN)
 names.h: /usr/include/linux/input.h gennames
 	./gennames $< > $@
 
-inputlircd: inputlircd.c input.h names.h
+inputlircd: inputlircd.c /usr/include/linux/input.h names.h
 	$(CC) $(CFLAGS) -o $@ $<
 
 install: install-sbin install-man

@@ -33,6 +33,11 @@ The default is
 .Pa /dev/lircd .
 .It Fl f
 Run in the foreground.
+.It Fl g
+Grab the input device(s).
+This gives 
+.Nm
+exclusive access to the input devices and stops events from propagating any further.
 .It Fl m Ar keycode
 Minimum keycode to send to LIRC clients.
 Keycodes lower than this number are filtered out.
