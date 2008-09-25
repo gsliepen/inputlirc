@@ -19,11 +19,11 @@
 TYPES="KEY BTN"
 
 for type in $TYPES; do
-	grep "^#define ${type}_" < $1
+	grep "^#define ${type}_" < $1 | sed 's/\/\*.*//g'
 done
 
-grep "^#define EV_KEY" < $1
-grep "^#define KEY_MAX" < $1
+grep "^#define EV_KEY" < $1 | sed 's/\/\*.*//g'
+grep "^#define KEY_MAX" < $1 | sed 's/\/\*.*//g'
 
 echo "static const char *KEY_NAME[KEY_MAX] = {"
 for type in $TYPES; do
