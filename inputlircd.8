@@ -7,6 +7,8 @@
 .Nm
 .Op Fl d Ar socket
 .Op Fl f
+.Op Fl c
+.Op Fl r Ar repeat-rate
 .Op Fl m Ar keycode
 .Op Fl u Ar username
 .Ar device
@@ -33,6 +35,14 @@ The default is
 .Pa /dev/lircd .
 .It Fl f
 Run in the foreground.
+.It Fl c
+Capture modifier keys.
+This causes the CTRL, SHIFT, ALT and META keys to be treated as modifer keys that, when used in combination with another keys, change the LIRC event from that key rather than being sent as their own LIRC events.
+.It Fl r Ar repeat-rate
+Set the repeat rate (in milliseconds) of the remote control.
+The default is 0. Repeated keys that arrive less than
+.Ar repeat-rate
+milliseconds apart will be flagged as as repeat LIRC events.
 .It Fl g
 Grab the input device(s).
 This gives 

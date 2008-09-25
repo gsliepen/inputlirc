@@ -60,6 +60,16 @@ static bool grab = false;
 static int key_min = 88;
 static char *device = "/dev/lircd";
 
+static bool capture_modifiers = false;
+static bool meta = false;
+static bool alt = false;
+static bool shift = false;
+static bool ctrl = false;
+
+static long repeat_time = 0L;
+static struct timeval previous_input;
+static int repeat = 0;
+
 static void *xalloc(size_t size) {
 	void *buf = malloc(size);
 	if(!buf) {
@@ -143,6 +153,11 @@ static void processnewclient(void) {
 	newclient->next = clients;
 	clients = newclient;
 }
+
+static long time_elapsed(struct timeval *last, struct timeval *current) {
+	long seconds = current->tv_sec - last->tv_sec;
+	return 1000000 * seconds + current->tv_usec - last->tv_usec;
+}
 	
 static void processevent(evdev_t *evdev) {
 	struct input_event event;
@@ -158,14 +173,45 @@ static void processevent(evdev_t *evdev) {
 	if(event.type != EV_KEY)
 		return;
 
-	if(!event.value || event.code > KEY_MAX || event.code < key_min)
+	if(event.code > KEY_MAX || event.code < key_min)
+		return;
+	
+	if(capture_modifiers) {
+		if(event.code == KEY_LEFTCTRL || event.code == KEY_RIGHTCTRL) {
+			ctrl = !!event.value;
+			return;
+		}
+		if(event.code == KEY_LEFTSHIFT || event.code == KEY_RIGHTSHIFT) {
+			shift = !!event.value;
+			return;
+		}
+		if(event.code == KEY_LEFTALT || event.code == KEY_RIGHTALT) {
+			alt = !!event.value;
+			return;
+		}
+		if(event.code == KEY_LEFTMETA || event.code == KEY_RIGHTMETA) {
+			meta = !!event.value;
+			return;
+		}
+	}
+
+	if(!event.value) 
 		return;
 
-	if(KEY_NAME[event.code])
-		len = snprintf(message, sizeof message, "%x %x %s %s\n", event.code, 0, KEY_NAME[event.code], evdev->name);
-	else
-		len = snprintf(message, sizeof message, "%x %x KEY_CODE_%d %s\n", event.code, 0, event.code, evdev->name);
+	struct timeval current;
+	gettimeofday(&current, NULL);
+	if(time_elapsed(&previous_input, &current) < repeat_time)
+		repeat++;
+	else 
+		repeat = 0;
 
+	if(KEY_NAME[event.code])
+		len = snprintf(message, sizeof message, "%x %x %s%s%s%s%s %s\n", event.code, repeat, ctrl ? "CTRL_" : "", shift ? "SHIFT_" : "", alt ? "ALT_" : "", meta ? "META_" : "", KEY_NAME[event.code], evdev->name);
+	else
+		len = snprintf(message, sizeof message, "%x %x KEY_CODE_%d %s\n", event.code, repeat, event.code, evdev->name);
+
+	previous_input = current;
+	
 	for(client = clients; client; client = client->next) {
 		if(write(client->fd, message, len) != len) {
 			close(client->fd);
@@ -231,13 +277,18 @@ int main(int argc, char *argv[]) {
 	int opt;
 	bool foreground = false;
 
-        while((opt = getopt(argc, argv, "d:gm:fu:")) != -1) {
+	gettimeofday(&previous_input, NULL);
+
+	while((opt = getopt(argc, argv, "cd:gm:fu:r:")) != -1) {
                 switch(opt) {
 			case 'd':
 				device = strdup(optarg);
 				break;
 			case 'g':
 				grab = true;
+				break;
+			case 'c':
+				capture_modifiers = true;
 				break;
 			case 'm':
 				key_min = atoi(optarg);
@@ -247,6 +298,9 @@ int main(int argc, char *argv[]) {
 				break;
 			case 'f':
 				foreground = true;
+				break;
+			case 'r':
+				repeat_time = atoi(optarg) * 1000L;
 				break;
                         default:
 				fprintf(stderr, "Unknown option!\n");
