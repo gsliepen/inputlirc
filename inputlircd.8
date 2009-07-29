@@ -59,6 +59,12 @@ Set user and group id to that of
 .Ar username
 after opening the devices and UNIX socket as root.
 The default is nobody.
+.It Fl t Ar path
+Provides the path to a file containing a mapping between input event key names and the commands which
+should be reported via lirc. The files should contain lines of the form
+.Pa KEY_FOO = bar .
+This is useful for backward compatibility.
+The default is not to use a translation table.
 .It Ar device
 One or more input event devices.
 If you want to use

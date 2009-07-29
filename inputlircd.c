@@ -16,6 +16,7 @@
     Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301 USA
 */
 
+#define _GNU_SOURCE
 #include <stdio.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -35,6 +36,7 @@
 #include <signal.h>
 #include <syslog.h>
 #include <pwd.h>
+#include <ctype.h>
 
 #include </usr/include/linux/input.h>
 #include "names.h"
@@ -78,6 +80,56 @@ static void *xalloc(size_t size) {
 	}
 	memset(buf, 0, size);
 	return buf;
+}
+
+static void parse_translation_table(const char *path) {
+	FILE *table;
+	char *line = NULL;
+	size_t line_size = 0;
+	char event_name[100];
+	char lirc_name[100];
+	unsigned int i;
+
+	if(!path)
+		return;
+
+	table = fopen(path, "r");
+	if(!table) {
+		fprintf(stderr, "Could not open translation table %s: %s\n", path, strerror(errno));
+		return;
+	}
+
+	while(getline(&line, &line_size, table) >= 0) {
+		if (sscanf(line, " %99s = %99s ", event_name, lirc_name) != 2)
+			continue;
+
+		event_name[99] = '\0';
+		lirc_name[99] = '\0';
+		if(strlen(event_name) < 1 || strlen(lirc_name) < 1)
+			continue;
+
+		if(!(i = strtoul(event_name, NULL, 0))) {
+			for(i = 0; i < KEY_MAX; i++) {
+				if (!KEY_NAME[i])
+					continue;
+				if(!strcmp(event_name, KEY_NAME[i]))
+					break;
+			}
+		}
+
+		if(i >= KEY_MAX)
+			continue;
+
+		KEY_NAME[i] = strdup(lirc_name);
+
+		if(!KEY_NAME[i]) {
+			fprintf(stderr, "strdup failure: %s\n", strerror(errno));
+			exit(EX_OSERR);
+		}
+	}
+
+	fclose(table);
+	free(line);
 }
 
 static void add_evdevs(int argc, char *argv[]) {
@@ -158,7 +210,7 @@ static long time_elapsed(struct timeval *last, struct timeval *current) {
 	long seconds = current->tv_sec - last->tv_sec;
 	return 1000000 * seconds + current->tv_usec - last->tv_usec;
 }
-	
+
 static void processevent(evdev_t *evdev) {
 	struct input_event event;
 	char message[1000];
@@ -274,12 +326,13 @@ static void main_loop(void) {
 
 int main(int argc, char *argv[]) {
 	char *user = "nobody";
+	char *translation_path = NULL;
 	int opt;
 	bool foreground = false;
 
 	gettimeofday(&previous_input, NULL);
 
-	while((opt = getopt(argc, argv, "cd:gm:fu:r:")) != -1) {
+	while((opt = getopt(argc, argv, "cd:gm:fu:r:t:")) != -1) {
                 switch(opt) {
 			case 'd':
 				device = strdup(optarg);
@@ -302,6 +355,9 @@ int main(int argc, char *argv[]) {
 			case 'r':
 				repeat_time = atoi(optarg) * 1000L;
 				break;
+			case 't':
+				translation_path = strdup(optarg);
+				break;
                         default:
 				fprintf(stderr, "Unknown option!\n");
                                 return EX_USAGE;
@@ -319,6 +375,8 @@ int main(int argc, char *argv[]) {
 		fprintf(stderr, "Unable to open any event device!\n");
 		return EX_OSERR;
 	}
+
+	parse_translation_table(translation_path);
 
 	add_unixsocket();
 
