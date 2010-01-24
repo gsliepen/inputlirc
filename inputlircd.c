@@ -37,6 +37,8 @@
 #include <syslog.h>
 #include <pwd.h>
 #include <ctype.h>
+#include <glob.h>
+#include <fnmatch.h>
 
 #include </usr/include/linux/input.h>
 #include "names.h"
@@ -132,32 +134,68 @@ static void parse_translation_table(const char *path) {
 	free(line);
 }
 
-static void add_evdevs(int argc, char *argv[]) {
-	int i;
+static void add_evdev(char *name) {
+	int fd;
 	evdev_t *newdev;
 
-	for(i = 0; i < argc; i++) {
-		newdev = xalloc(sizeof *newdev);
-		newdev->fd = open(argv[i], O_RDONLY);
-		if(newdev->fd < 0) {
-			free(newdev);
-			fprintf(stderr, "Could not open %s: %s\n", argv[i], strerror(errno));
-			continue;
-		}
-		if(grab) {
-			if(ioctl(newdev->fd, EVIOCGRAB, 1) < 0) {
-				close(newdev->fd);
-				free(newdev);
-				fprintf(stderr, "Failed to grab %s: %s\n", argv[i], strerror(errno));
-				continue;
-			}
-		}
-		newdev->name = basename(strdup(argv[i]));
-		newdev->next = evdevs;
-		evdevs = newdev;
+	fd = open(name, O_RDONLY);
+	if(fd < 0) {
+		fprintf(stderr, "Could not open %s: %s\n", name, strerror(errno));
+		return;
 	}
+
+	if(grab) {
+		if(ioctl(fd, EVIOCGRAB, 1) < 0) {
+			close(fd);
+			fprintf(stderr, "Failed to grab %s: %s\n", name, strerror(errno));
+			return;
+		}
+	}
+
+	newdev = xalloc(sizeof *newdev);
+	newdev->fd = fd;
+	newdev->name = basename(strdup(name));
+	newdev->next = evdevs;
+	evdevs = newdev;
 }
 	
+static void add_named(char *pattern) {
+	int i, result, fd;
+	char name[32];
+	glob_t g;
+
+	result = glob("/dev/input/event*", GLOB_NOSORT, NULL, &g);
+
+	if(result == GLOB_NOMATCH) {
+		fprintf(stderr, "No event devices found!\n");
+		return;
+	} else if(result) {
+		fprintf(stderr, "Could not read /dev/input/event*: %s\n", strerror(errno));
+		return;
+	}
+
+	for(i = 0; i < g.gl_pathc; i++) {
+		fd = open(g.gl_pathv[i], O_RDONLY);
+		if(fd < 0) {
+			fprintf(stderr, "Could not open %s: %s\n", g.gl_pathv[i], strerror(errno));
+			continue;
+		}
+		
+		result = ioctl(fd, EVIOCGNAME(sizeof(name)), name);
+		close(fd);
+		if(result < 0) {
+			fprintf(stderr, "Could not read name of event device %s: %s\n", g.gl_pathv[i], strerror(errno));
+			continue;
+		}
+		
+		name[(sizeof name) -1] = 0;
+		if(!fnmatch(pattern, name, FNM_CASEFOLD))
+			add_evdev(g.gl_pathv[i]);
+	}
+
+	globfree(&g);
+}
+
 static void add_unixsocket(void) {
 	struct sockaddr_un sa = {0};
 	sockfd = socket(AF_UNIX, SOCK_STREAM, 0);
@@ -184,7 +222,6 @@ static void add_unixsocket(void) {
 		exit(EX_OSERR);
 	}
 }
-
 
 static void processnewclient(void) {
 	client_t *newclient = xalloc(sizeof *newclient);
@@ -327,12 +364,12 @@ static void main_loop(void) {
 int main(int argc, char *argv[]) {
 	char *user = "nobody";
 	char *translation_path = NULL;
-	int opt;
-	bool foreground = false;
+	int opt, i;
+	bool foreground = false, named = false;
 
 	gettimeofday(&previous_input, NULL);
 
-	while((opt = getopt(argc, argv, "cd:gm:fu:r:t:")) != -1) {
+	while((opt = getopt(argc, argv, "cd:gm:n:fu:r:t:")) != -1) {
                 switch(opt) {
 			case 'd':
 				device = strdup(optarg);
@@ -345,6 +382,10 @@ int main(int argc, char *argv[]) {
 				break;
 			case 'm':
 				key_min = atoi(optarg);
+				break;
+			case 'n':
+				named = true;
+				add_named(optarg);
 				break;
 			case 'u':
 				user = strdup(optarg);
@@ -364,12 +405,13 @@ int main(int argc, char *argv[]) {
                 }
         }
 
-	if(argc <= optind) {
+	if(argc <= optind && !named) {
 		fprintf(stderr, "Not enough arguments.\n");
 		return EX_USAGE;
 	}
 
-	add_evdevs(argc - optind, argv + optind);
+	for(i = optind; i < argc; i++)
+		add_evdev(argv[i]);
 
 	if(!evdevs) {
 		fprintf(stderr, "Unable to open any event device!\n");

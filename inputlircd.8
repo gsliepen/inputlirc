@@ -10,6 +10,7 @@
 .Op Fl c
 .Op Fl r Ar repeat-rate
 .Op Fl m Ar keycode
+.Op Fl n Ar device name
 .Op Fl u Ar username
 .Ar device
 .Op Ar device Li ...
@@ -54,6 +55,20 @@ Keycodes lower than this number are filtered out.
 The default is 88, this filters out the alphanumeric section and the keypad section of normal keyboards,
 but allows all extended keys.
 The rationale is that clients should not be able to grab normal keypresses, this could be a security risk.
+.It Fl n Ar device name
+Name of an input device to read events from.
+This scans all available input event devices,
+and if the symbolic name of an event device matches
+.Ar device name ,
+adds it to the list of devices to read from.
+The
+.Ar device name
+can contain wildcard patterns, see
+.Xr glob 7 .
+To get a list of available devices and their names, cat
+.Pa /proc/bus/input/devices
+or use
+.Xr lsinput 8 .
 .It Fl u Ar username
 Set user and group id to that of
 .Ar username
