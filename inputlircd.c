@@ -72,6 +72,7 @@ static bool ctrl = false;
 
 static long repeat_time = 0L;
 static struct timeval previous_input;
+static struct input_event previous_event;
 static int repeat = 0;
 
 static void *xalloc(size_t size) {
@@ -289,7 +290,7 @@ static void processevent(evdev_t *evdev) {
 
 	struct timeval current;
 	gettimeofday(&current, NULL);
-	if(time_elapsed(&previous_input, &current) < repeat_time)
+	if(event.code == previous_event.code && time_elapsed(&previous_input, &current) < repeat_time)
 		repeat++;
 	else 
 		repeat = 0;
@@ -300,6 +301,7 @@ static void processevent(evdev_t *evdev) {
 		len = snprintf(message, sizeof message, "%x %x KEY_CODE_%d %s\n", event.code, repeat, event.code, evdev->name);
 
 	previous_input = current;
+	previous_event = event;
 	
 	for(client = clients; client; client = client->next) {
 		if(write(client->fd, message, len) != len) {
