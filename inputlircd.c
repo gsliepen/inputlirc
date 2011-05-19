@@ -72,6 +72,7 @@ static bool ctrl = false;
 
 static long repeat_time = 0L;
 static struct timeval previous_input;
+static struct timeval evdev_timeout;
 static struct input_event previous_event;
 static int repeat = 0;
 
@@ -135,31 +136,56 @@ static void parse_translation_table(const char *path) {
 	free(line);
 }
 
-static void add_evdev(char *name) {
-	int fd;
-	evdev_t *newdev;
 
+static int open_evdev(char *name) {
+	int fd;
 	fd = open(name, O_RDONLY);
 	if(fd < 0) {
-		fprintf(stderr, "Could not open %s: %s\n", name, strerror(errno));
-		return;
+		syslog(LOG_ERR, "Could not open %s: %s\n", name, strerror(errno));
+		return -1;
 	}
 
 	if(grab) {
 		if(ioctl(fd, EVIOCGRAB, 1) < 0) {
 			close(fd);
-			fprintf(stderr, "Failed to grab %s: %s\n", name, strerror(errno));
-			return;
+			syslog(LOG_ERR, "Failed to grab %s: %s\n", name, strerror(errno));
+			return -1;
 		}
 	}
+	return fd;
+}
+
+static void rescan_evdevs(fd_set *permset) {
+	evdev_t *evdev;
+	int fd;
+	for(evdev = evdevs; evdev; evdev = evdev->next) {
+		if(evdev->fd == -999) {
+			syslog(LOG_INFO, "Reading device: %s", evdev->name);
+			fd = open_evdev(evdev->name);
+			if(fd >= 0) {
+				evdev->fd = fd;
+				FD_SET(evdev->fd, permset);
+				syslog(LOG_INFO, "Success!");
+			}
+		}
+	}
+}
+
+
+static void add_evdev(char *name) {
+	int fd;
+	evdev_t *newdev;
+
+	fd = open_evdev(name);
 
 	newdev = xalloc(sizeof *newdev);
 	newdev->fd = fd;
-	newdev->name = basename(strdup(name));
+	newdev->name = strdup(name);
 	newdev->next = evdevs;
 	evdevs = newdev;
 }
-	
+
+
 static void add_named(char *pattern) {
 	int i, result, fd;
 	char name[32];
@@ -249,7 +275,7 @@ static long time_elapsed(struct timeval *last, struct timeval *current) {
 	return 1000000 * seconds + current->tv_usec - last->tv_usec;
 }
 
-static void processevent(evdev_t *evdev) {
+static void processevent(evdev_t *evdev, fd_set *permset) {
 	struct input_event event;
 	char message[1000];
 	int len;
@@ -257,7 +283,10 @@ static void processevent(evdev_t *evdev) {
 
 	if(read(evdev->fd, &event, sizeof event) != sizeof event) {
 		syslog(LOG_ERR, "Error processing event from %s: %s\n", evdev->name, strerror(errno));
-		exit(EX_OSERR);
+		FD_CLR(evdev->fd, permset);
+		close(evdev->fd);
+		evdev->fd = -999;
+		return;
 	}
 	
 	if(event.type != EV_KEY)
@@ -329,6 +358,7 @@ static void main_loop(void) {
 	fd_set fdset;
 	evdev_t *evdev;
 	int maxfd = 0;
+	int retselect;
 
 	FD_ZERO(&permset);
 	
@@ -347,21 +377,29 @@ static void main_loop(void) {
 	while(true) {
 		fdset = permset;
 		
-		if(select(maxfd, &fdset, NULL, NULL, NULL) < 0) {
-			if(errno == EINTR)
-				continue;
-			syslog(LOG_ERR, "Error during select(): %s\n", strerror(errno));
-			exit(EX_OSERR);
+		//wait for 30 secs, then rescan devices
+		evdev_timeout.tv_sec = 30;
+		
+		retselect = select(maxfd, &fdset, NULL, NULL, &evdev_timeout);
+		if(retselect > 0) {
+			for(evdev = evdevs; evdev; evdev = evdev->next)
+				if(FD_ISSET(evdev->fd, &fdset))
+					processevent(evdev, &permset);
+
+			if(FD_ISSET(sockfd, &fdset))
+				processnewclient();
 		}
-
-		for(evdev = evdevs; evdev; evdev = evdev->next)
-			if(FD_ISSET(evdev->fd, &fdset))
-				processevent(evdev);
-
-		if(FD_ISSET(sockfd, &fdset))
-			processnewclient();
+		else {
+			if(retselect < 0) {
+				if(errno == EINTR)
+					continue;
+				syslog(LOG_ERR, "Error during select(): %s\n", strerror(errno));
+			}
+			rescan_evdevs(&permset);
+		}
 	}
 }
+
 
 int main(int argc, char *argv[]) {
 	char *user = "nobody";
