@@ -62,7 +62,7 @@ static int sockfd;
 
 static bool grab = false;
 static int key_min = 88;
-static char *device = "/dev/lircd";
+static char *device = "/var/run/lirc/lircd";
 
 static bool capture_modifiers = false;
 static bool meta = false;
