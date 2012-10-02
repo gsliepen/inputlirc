@@ -145,6 +145,20 @@ static int open_evdev(char *name) {
 		return -1;
 	}
 
+	char bits = 0;
+
+	if(ioctl(fd, EVIOCGBIT(0, sizeof bits), &bits) < 0) {
+		close(fd);
+		syslog(LOG_ERR, "Could not read supported event types from %s: %s\n", name, strerror(errno));
+		return -1;
+	}
+
+	if(!(bits & 2)) {
+		close(fd);
+		syslog(LOG_ERR, "%s does not support EV_KEY events\n", name);
+		return -1;
+	}
+
 	if(grab) {
 		if(ioctl(fd, EVIOCGRAB, 1) < 0) {
 			close(fd);
