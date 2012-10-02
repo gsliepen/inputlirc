@@ -450,6 +450,8 @@ int main(int argc, char *argv[]) {
 		return EX_USAGE;
 	}
 
+	openlog("inputlircd", LOG_PERROR, LOG_DAEMON);
+
 	for(i = optind; i < argc; i++)
 		add_evdev(argv[i]);
 
@@ -473,8 +475,11 @@ int main(int argc, char *argv[]) {
 		return EX_OSERR;
 	}
 
-	if(!foreground)
+	if(!foreground) {
+		closelog();
 		daemon(0, 0);
+		openlog("inputlircd", 0, LOG_DAEMON);
+	}
 
 	syslog(LOG_INFO, "Started");
 
