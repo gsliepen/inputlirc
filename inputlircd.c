@@ -177,6 +177,8 @@ static void add_evdev(char *name) {
 	evdev_t *newdev;
 
 	fd = open_evdev(name);
+	if(fd < 0)
+		return;
 
 	newdev = xalloc(sizeof *newdev);
 	newdev->fd = fd;
@@ -363,6 +365,8 @@ static void main_loop(void) {
 	FD_ZERO(&permset);
 	
 	for(evdev = evdevs; evdev; evdev = evdev->next) {
+		if(evdev->fd < 0)
+			continue;
 		FD_SET(evdev->fd, &permset);
 		if(evdev->fd > maxfd)
 			maxfd = evdev->fd;
