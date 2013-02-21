@@ -1,5 +1,5 @@
 # inputlircd -- zeroconf LIRC daemon that reads from /dev/input/event devices
-# Copyright (C) 2006  Guus Sliepen <guus@sliepen.eu.org>
+# Copyright (C) 2006-2013  Guus Sliepen <guus@sliepen.org>
 # 
 # This program is free software; you can redistribute it and/or modify it
 # under the terms of version 2 of the GNU General Public License as published
@@ -31,7 +31,7 @@ names.h: /usr/include/linux/input.h gennames
 	./gennames $< > $@
 
 inputlircd: inputlircd.c /usr/include/linux/input.h names.h
-	$(CC) $(CFLAGS) -o $@ $<
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(LDFLAGS) -o $@ $<
 
 install: install-sbin install-man
 
