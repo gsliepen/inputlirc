@@ -27,7 +27,7 @@ MANDIR ?= $(SHAREDIR)/man
 
 all: $(SBIN)
 
-names.h: /usr/include/linux/input.h gennames
+names.h: /usr/include/linux/input-event-codes.h gennames
 	./gennames $< > $@
 
 inputlircd: inputlircd.c /usr/include/linux/input.h names.h
