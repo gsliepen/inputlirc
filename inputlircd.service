@@ -1,0 +1,12 @@
+[Unit]
+Documentation=man:inputlircd(8)
+Description=Zeroconf LIRC daemon using input event devices
+After=udev lircd
+
+[Service]
+Type=simple
+EnvironmentFile=/etc/default/inputlircd
+ExecStart=/usr/sbin/inputlircd -f $OPTIONS $EVENTS
+
+[Install]
+WantedBy=multi-user.target
