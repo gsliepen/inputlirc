@@ -33,7 +33,7 @@ It will only read events from those devices.
 .It Fl d Ar socket
 Location of the UNIX socket to which LIRC clients can connect.
 The default is
-.Pa /var/run/lirc/lircd .
+.Pa /run/lirc/lircd .
 .It Fl f
 Run in the foreground.
 .It Fl c
@@ -97,7 +97,7 @@ If unsure, you can add all available input event devices.
 .El
 .Sh FILES
 .Bl -tag -width indent
-.It Pa /var/run/lirc/lircd
+.It Pa /run/lirc/lircd
 Default location of the UNIX socket to which LIRC clients can connect.
 .It Pa /dev/input/event Ns X
 The kernel input layer's event device files.
