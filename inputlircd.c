@@ -145,7 +145,7 @@ static int open_evdev(char *name) {
 		return -1;
 	}
 
-	char bits = 0;
+	unsigned long bits = 0;
 
 	if(ioctl(fd, EVIOCGBIT(0, sizeof bits), &bits) < 0) {
 		close(fd);
@@ -153,7 +153,9 @@ static int open_evdev(char *name) {
 		return -1;
 	}
 
-	if(!(bits & 2)) {
+	fprintf(stderr, "%s %lx\n", name, bits);
+
+	if(!(bits & (1 << EV_KEY))) {
 		close(fd);
 		syslog(LOG_ERR, "%s does not support EV_KEY events\n", name);
 		return -1;
@@ -470,8 +472,19 @@ int main(int argc, char *argv[]) {
 
 	openlog("inputlircd", LOG_PERROR, LOG_DAEMON);
 
-	for(i = optind; i < argc; i++)
-		add_evdev(argv[i]);
+	glob_t paths = {};
+	for(i = optind; i < argc; i++) {
+		int result = glob(argv[i], GLOB_NOSORT | GLOB_NOMAGIC | (i > optind ? GLOB_APPEND : 0), NULL, &paths);
+		if (result && result != GLOB_NOMATCH) {
+			fprintf(stderr, "Could not glob %s: %s\n", argv[i], strerror(errno));
+			return EX_OSERR;
+		}
+	}
+
+	for(i = 0; i < paths.gl_pathc; i++)
+		add_evdev(paths.gl_pathv[i]);
+
+	globfree(&paths);
 
 	if(!evdevs) {
 		fprintf(stderr, "Unable to open any event device!\n");
