@@ -16,6 +16,7 @@
 
 SBIN = inputlircd
 MAN8 = inputlircd.8
+SERVICE = inputlirc.service
 
 CC ?= gcc
 CFLAGS ?= -Wall -g -O2 -pipe
@@ -24,6 +25,7 @@ INSTALL ?= install
 SBINDIR ?= $(PREFIX)/sbin
 SHAREDIR ?= $(PREFIX)/share
 MANDIR ?= $(SHAREDIR)/man
+SYSTEMDDIR ?= $(PREFIX)/lib/systemd/system
 
 all: $(SBIN)
 
@@ -33,7 +35,7 @@ names.h: /usr/include/linux/input-event-codes.h gennames
 inputlircd: inputlircd.c /usr/include/linux/input.h names.h
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(LDFLAGS) -o $@ $<
 
-install: install-sbin install-man
+install: install-sbin install-man install-service
 
 install-sbin: $(SBIN)
 	mkdir -p $(DESTDIR)$(SBINDIR)
@@ -43,5 +45,11 @@ install-man: $(MAN1) $(MAN5) $(MAN8)
 	mkdir -p $(DESTDIR)$(MANDIR)/man8/
 	$(INSTALL) -m 644 $(MAN8) $(DESTDIR)$(MANDIR)/man8/
 
+install-service: $(SERVICE)
+	mkdir -p $(DESTDIR)$(SYSTEMDDIR)
+	$(INSTALL) -m 644 $(SERVICE) $(DESTDIR)$(SYSTEMDDIR)/
+
 clean:
 	rm -f $(SBIN) names.h
+
+.PHONY: all install install-sbin install-man install-service clean

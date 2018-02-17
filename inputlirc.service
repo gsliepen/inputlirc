@@ -5,7 +5,7 @@ After=udev lircd
 
 [Service]
 Type=simple
-EnvironmentFile=/etc/default/inputlircd
+EnvironmentFile=/etc/default/inputlirc
 ExecStart=/usr/sbin/inputlircd -f $OPTIONS $EVENTS
 
 [Install]
