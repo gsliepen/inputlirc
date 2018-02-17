@@ -495,7 +495,10 @@ int main(int argc, char *argv[]) {
 
 	if(!foreground) {
 		closelog();
-		daemon(0, 0);
+		if(daemon(0, 0)) {
+			fprintf(stderr, "Unable to run in the background: %s\n", strerror(errno));
+			return EX_OSERR;
+		}
 		openlog("inputlircd", 0, LOG_DAEMON);
 	}
 
