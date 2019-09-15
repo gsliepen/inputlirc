@@ -250,6 +250,17 @@ static void add_unixsocket(void) {
 		exit(EX_OSERR);
 	}
 
+	char *filename = strdup(device);
+	if(filename) {
+		char *dir = dirname(filename);
+		if(mkdir(dir, 0755) && errno != EEXIST) {
+			fprintf(stderr, "Unable to create %s: %s\n", dir, strerror(errno));
+			exit(EX_OSERR);
+		}
+		chmod(dir, 0755);
+		free(filename);
+	}
+
 	sa.sun_family = AF_UNIX;
 	strncpy(sa.sun_path, device, sizeof sa.sun_path - 1);
 
