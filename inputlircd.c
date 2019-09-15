@@ -253,11 +253,14 @@ static void add_unixsocket(void) {
 	char *filename = strdup(device);
 	if(filename) {
 		char *dir = dirname(filename);
-		if(mkdir(dir, 0755) && errno != EEXIST) {
-			fprintf(stderr, "Unable to create %s: %s\n", dir, strerror(errno));
-			exit(EX_OSERR);
+		if(mkdir(dir, 0755)) {
+			if (errno != EEXIST) {
+				fprintf(stderr, "Unable to create %s: %s\n", dir, strerror(errno));
+				exit(EX_OSERR);
+			}
+		} else {
+			chmod(dir, 0755);
 		}
-		chmod(dir, 0755);
 		free(filename);
 	}
 
