@@ -63,6 +63,7 @@ static int sockfd;
 static bool grab = false;
 static int key_min = 88;
 static char *device = "/run/lirc/lircd";
+static char *rc_name = NULL;
 
 static bool capture_modifiers = false;
 static bool meta = false;
@@ -356,10 +357,12 @@ static void processevent(evdev_t *evdev, fd_set *permset) {
 	else 
 		repeat = 0;
 
+	char *name = rc_name ? rc_name : evdev->name;
+
 	if(KEY_NAME[event.code])
-		len = snprintf(message, sizeof message, "%x %x %s%s%s%s%s %s\n", event.code, repeat, ctrl ? "CTRL_" : "", shift ? "SHIFT_" : "", alt ? "ALT_" : "", meta ? "META_" : "", KEY_NAME[event.code], evdev->name);
+		len = snprintf(message, sizeof message, "%x %x %s%s%s%s%s %s\n", event.code, repeat, ctrl ? "CTRL_" : "", shift ? "SHIFT_" : "", alt ? "ALT_" : "", meta ? "META_" : "", KEY_NAME[event.code], name);
 	else
-		len = snprintf(message, sizeof message, "%x %x KEY_CODE_%d %s\n", event.code, repeat, event.code, evdev->name);
+		len = snprintf(message, sizeof message, "%x %x KEY_CODE_%d %s\n", event.code, repeat, event.code, name);
 
 	previous_input = current;
 	previous_event = event;
@@ -443,8 +446,8 @@ int main(int argc, char *argv[]) {
 
 	gettimeofday(&previous_input, NULL);
 
-	while((opt = getopt(argc, argv, "cd:gm:n:fu:r:t:")) != -1) {
-                switch(opt) {
+	while((opt = getopt(argc, argv, "cd:gm:n:fu:r:t:N:")) != -1) {
+		switch(opt) {
 			case 'd':
 				device = strdup(optarg);
 				break;
@@ -473,11 +476,14 @@ int main(int argc, char *argv[]) {
 			case 't':
 				translation_path = strdup(optarg);
 				break;
-                        default:
+			case 'N':
+				rc_name = strdup(optarg);
+				break;
+			default:
 				fprintf(stderr, "Unknown option!\n");
-                                return EX_USAGE;
-                }
-        }
+				return EX_USAGE;
+		}
+	}
 
 	if(argc <= optind && !named) {
 		fprintf(stderr, "Not enough arguments.\n");

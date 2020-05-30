@@ -9,9 +9,12 @@
 .Op Fl f
 .Op Fl c
 .Op Fl r Ar repeat-rate
+.Op Fl g
 .Op Fl m Ar keycode
 .Op Fl n Ar device name
 .Op Fl u Ar username
+.Op Fl t Ar path
+.Op Fl N Ar rc name
 .Ar device
 .Op Ar device Li ...
 .Sh DESCRIPTION
@@ -80,6 +83,12 @@ should be reported via lirc. The files should contain lines of the form
 .Pa KEY_FOO = bar .
 This is useful for backward compatibility.
 The default is not to use a translation table.
+.It Fl N Ar rc name
+Set the remote control name, that is, a value of the last field of LIRC broadcast messages.
+If there is more than one input event device, the specified name will be used for all of them.
+If
+.Ar rc name
+is not specified, the filesystem path of each input event device will be used as its remote control name.
 .It Ar device
 One or more input event devices.
 If you want to use
