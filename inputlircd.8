@@ -15,6 +15,8 @@
 .Op Fl u Ar username
 .Op Fl t Ar path
 .Op Fl N Ar rc name
+.Op Fl A Ar delay:period
+.Op Fl a
 .Ar device
 .Op Ar device Li ...
 .Sh DESCRIPTION
@@ -89,6 +91,14 @@ If there is more than one input event device, the specified name will be used fo
 If
 .Ar rc name
 is not specified, the filesystem path of each input event device will be used as its remote control name.
+.It Fl A Ar delay:period
+Add autorepeat function for devices which don't support it.
+.Ar delay:period
+sets autorepeat timing in milliseconds: delay before the first
+repeated key and the interval between consecutive repeats.
+.It Fl a
+Add autorepeat function for devices which don't support it. Use default delay (250) and
+period (33).
 .It Ar device
 One or more input event devices.
 If you want to use
