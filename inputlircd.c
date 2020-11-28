@@ -43,9 +43,20 @@
 #include </usr/include/linux/input.h>
 #include "names.h"
 
+struct modifiers {
+	bool meta;
+	bool alt;
+	bool shift;
+	bool ctrl;
+};
+
 typedef struct evdev {
 	char *name;
 	int fd;
+	struct timeval previous_input;
+	struct input_event previous_event;
+	int repeat;
+	struct modifiers mod;
 	struct evdev *next;
 } evdev_t;
 
@@ -66,16 +77,9 @@ static char *device = "/run/lirc/lircd";
 static char *rc_name = NULL;
 
 static bool capture_modifiers = false;
-static bool meta = false;
-static bool alt = false;
-static bool shift = false;
-static bool ctrl = false;
 
 static long repeat_time = 0L;
-static struct timeval previous_input;
 static struct timeval evdev_timeout;
-static struct input_event previous_event;
-static int repeat = 0;
 
 static void *xalloc(size_t size) {
 	void *buf = malloc(size);
@@ -200,6 +204,7 @@ static void add_evdev(char *name) {
 	newdev = xalloc(sizeof *newdev);
 	newdev->fd = fd;
 	newdev->name = strdup(name);
+	gettimeofday(&newdev->previous_input, NULL);
 	newdev->next = evdevs;
 	evdevs = newdev;
 }
@@ -330,42 +335,50 @@ static void processevent(evdev_t *evdev, fd_set *permset) {
 	
 	if(capture_modifiers) {
 		if(event.code == KEY_LEFTCTRL || event.code == KEY_RIGHTCTRL) {
-			ctrl = !!event.value;
+			evdev->mod.ctrl = !!event.value;
 			return;
 		}
 		if(event.code == KEY_LEFTSHIFT || event.code == KEY_RIGHTSHIFT) {
-			shift = !!event.value;
+			evdev->mod.shift = !!event.value;
 			return;
 		}
 		if(event.code == KEY_LEFTALT || event.code == KEY_RIGHTALT) {
-			alt = !!event.value;
+			evdev->mod.alt = !!event.value;
 			return;
 		}
 		if(event.code == KEY_LEFTMETA || event.code == KEY_RIGHTMETA) {
-			meta = !!event.value;
+			evdev->mod.meta = !!event.value;
 			return;
 		}
 	}
 
-	if(!event.value) 
+	if(!event.value)
 		return;
 
 	struct timeval current;
 	gettimeofday(&current, NULL);
-	if(event.code == previous_event.code && time_elapsed(&previous_input, &current) < repeat_time)
-		repeat++;
-	else 
-		repeat = 0;
+	if(event.code == evdev->previous_event.code &&
+	   time_elapsed(&evdev->previous_input, &current) < repeat_time)
+		evdev->repeat++;
+	else
+		evdev->repeat = 0;
 
 	char *name = rc_name ? rc_name : evdev->name;
 
 	if(KEY_NAME[event.code])
-		len = snprintf(message, sizeof message, "%x %x %s%s%s%s%s %s\n", event.code, repeat, ctrl ? "CTRL_" : "", shift ? "SHIFT_" : "", alt ? "ALT_" : "", meta ? "META_" : "", KEY_NAME[event.code], name);
+		len = snprintf(message, sizeof message, "%x %x %s%s%s%s%s %s\n",
+		               event.code, evdev->repeat,
+		               evdev->mod.ctrl ? "CTRL_" : "",
+		               evdev->mod.shift ? "SHIFT_" : "",
+		               evdev->mod.alt ? "ALT_" : "",
+		               evdev->mod.meta ? "META_" : "",
+		               KEY_NAME[event.code], name);
 	else
-		len = snprintf(message, sizeof message, "%x %x KEY_CODE_%d %s\n", event.code, repeat, event.code, name);
+		len = snprintf(message, sizeof message, "%x %x KEY_CODE_%d %s\n",
+		               event.code, evdev->repeat, event.code, name);
 
-	previous_input = current;
-	previous_event = event;
+	evdev->previous_input = current;
+	evdev->previous_event = event;
 	
 	for(client = clients; client; client = client->next) {
 		if(write(client->fd, message, len) != len) {
@@ -443,8 +456,6 @@ int main(int argc, char *argv[]) {
 	char *translation_path = NULL;
 	int opt, i;
 	bool foreground = false, named = false;
-
-	gettimeofday(&previous_input, NULL);
 
 	while((opt = getopt(argc, argv, "cd:gm:n:fu:r:t:N:")) != -1) {
 		switch(opt) {
