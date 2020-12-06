@@ -43,9 +43,28 @@
 #include </usr/include/linux/input.h>
 #include "names.h"
 
+struct autorepeat {
+	struct timeval time;
+	unsigned int key_code;
+	unsigned int period;  /* mS */
+};
+
+struct modifiers {
+	bool meta;
+	bool alt;
+	bool shift;
+	bool ctrl;
+};
+
 typedef struct evdev {
 	char *name;
 	int fd;
+	struct timeval previous_input;
+	struct input_event previous_event;
+	int repeat;
+	struct modifiers mod;
+	bool autorepeat_enabled;
+	struct autorepeat ar;
 	struct evdev *next;
 } evdev_t;
 
@@ -66,16 +85,63 @@ static char *device = "/run/lirc/lircd";
 static char *rc_name = NULL;
 
 static bool capture_modifiers = false;
-static bool meta = false;
-static bool alt = false;
-static bool shift = false;
-static bool ctrl = false;
 
 static long repeat_time = 0L;
-static struct timeval previous_input;
-static struct timeval evdev_timeout;
-static struct input_event previous_event;
-static int repeat = 0;
+static bool autorepeat_enabled = false;
+static unsigned int autorepeat_delay_ms = 250;
+static unsigned int autorepeat_period_ms = 33;
+
+static void autorepeat_init(struct autorepeat *ar) {
+	ar->key_code = 0;
+}
+
+static void autorepeat_press(struct autorepeat *ar,
+                             unsigned int key_code,
+                             unsigned int delay_ms,
+                             unsigned int period_ms,
+                             const struct timeval *now) {
+	ar->key_code = key_code;
+	ar->period = period_ms;
+
+	struct timeval delay = {0, delay_ms * 1000};
+	timeradd(now, &delay, &ar->time);
+}
+
+static void autorepeat_release(struct autorepeat *ar, unsigned int key_code) {
+	if(key_code != ar->key_code)
+		return;
+
+	autorepeat_init(ar);
+}
+
+static unsigned int autorepeat_poll(struct autorepeat *ar,
+                                    const struct timeval *now) {
+	if(ar->key_code == 0)
+		return 0;
+
+	if(timercmp(now, &ar->time, <))
+		return 0;
+
+	struct timeval period = {0, ar->period * 1000};
+	timeradd(now, &period, &ar->time);
+
+	return ar->key_code;
+}
+
+static bool autorepeat_active(const struct autorepeat *ar) {
+	return (ar->key_code != 0);
+}
+
+static void autorepeat_time_left(const struct autorepeat *ar,
+                                 const struct timeval *now,
+                                 struct timeval *result) {
+	if(timercmp(now, &ar->time, <))
+		timersub(&ar->time, now, result);
+	else {
+		result->tv_sec = 0;
+		result->tv_usec = 0;
+	}
+}
 
 static void *xalloc(size_t size) {
 	void *buf = malloc(size);
@@ -200,6 +266,13 @@ static void add_evdev(char *name) {
 	newdev = xalloc(sizeof *newdev);
 	newdev->fd = fd;
 	newdev->name = strdup(name);
+	gettimeofday(&newdev->previous_input, NULL);
+
+	unsigned int rep[2];
+	if(autorepeat_enabled && ioctl(fd, EVIOCGREP, rep) < 0)
+		/* Device doesn't support autorepeat */
+		newdev->autorepeat_enabled = true;
+
 	newdev->next = evdevs;
 	evdevs = newdev;
 }
@@ -303,70 +376,25 @@ static void processnewclient(void) {
 	clients = newclient;
 }
 
-static long time_elapsed(struct timeval *last, struct timeval *current) {
-	long seconds = current->tv_sec - last->tv_sec;
-	return 1000000 * seconds + current->tv_usec - last->tv_usec;
-}
-
-static void processevent(evdev_t *evdev, fd_set *permset) {
-	struct input_event event;
+static void send_to_clients(evdev_t *evdev, unsigned int key_code) {
 	char message[1000];
 	int len;
 	client_t *client, *prev, *next;
 
-	if(read(evdev->fd, &event, sizeof event) != sizeof event) {
-		syslog(LOG_ERR, "Error processing event from %s: %s\n", evdev->name, strerror(errno));
-		FD_CLR(evdev->fd, permset);
-		close(evdev->fd);
-		evdev->fd = -999;
-		return;
-	}
-	
-	if(event.type != EV_KEY)
-		return;
-
-	if(event.code > KEY_MAX || event.code < key_min)
-		return;
-	
-	if(capture_modifiers) {
-		if(event.code == KEY_LEFTCTRL || event.code == KEY_RIGHTCTRL) {
-			ctrl = !!event.value;
-			return;
-		}
-		if(event.code == KEY_LEFTSHIFT || event.code == KEY_RIGHTSHIFT) {
-			shift = !!event.value;
-			return;
-		}
-		if(event.code == KEY_LEFTALT || event.code == KEY_RIGHTALT) {
-			alt = !!event.value;
-			return;
-		}
-		if(event.code == KEY_LEFTMETA || event.code == KEY_RIGHTMETA) {
-			meta = !!event.value;
-			return;
-		}
-	}
-
-	if(!event.value) 
-		return;
-
-	struct timeval current;
-	gettimeofday(&current, NULL);
-	if(event.code == previous_event.code && time_elapsed(&previous_input, &current) < repeat_time)
-		repeat++;
-	else 
-		repeat = 0;
-
 	char *name = rc_name ? rc_name : evdev->name;
 
-	if(KEY_NAME[event.code])
-		len = snprintf(message, sizeof message, "%x %x %s%s%s%s%s %s\n", event.code, repeat, ctrl ? "CTRL_" : "", shift ? "SHIFT_" : "", alt ? "ALT_" : "", meta ? "META_" : "", KEY_NAME[event.code], name);
+	if(KEY_NAME[key_code])
+		len = snprintf(message, sizeof message, "%x %x %s%s%s%s%s %s\n",
+		               key_code, evdev->repeat,
+		               evdev->mod.ctrl ? "CTRL_" : "",
+		               evdev->mod.shift ? "SHIFT_" : "",
+		               evdev->mod.alt ? "ALT_" : "",
+		               evdev->mod.meta ? "META_" : "",
+		               KEY_NAME[key_code], name);
 	else
-		len = snprintf(message, sizeof message, "%x %x KEY_CODE_%d %s\n", event.code, repeat, event.code, name);
+		len = snprintf(message, sizeof message, "%x %x KEY_CODE_%d %s\n",
+		               key_code, evdev->repeat, key_code, name);
 
-	previous_input = current;
-	previous_event = event;
-	
 	for(client = clients; client; client = client->next) {
 		if(write(client->fd, message, len) != len) {
 			close(client->fd);
@@ -386,6 +414,112 @@ static void processevent(evdev_t *evdev, fd_set *permset) {
 			prev = client;
 		}
 	}
+}
+
+static long time_elapsed(struct timeval *last, struct timeval *current) {
+	long seconds = current->tv_sec - last->tv_sec;
+	return 1000000 * seconds + current->tv_usec - last->tv_usec;
+}
+
+static void processevent(evdev_t *evdev, fd_set *permset) {
+	struct input_event event;
+
+	if(read(evdev->fd, &event, sizeof event) != sizeof event) {
+		syslog(LOG_ERR, "Error processing event from %s: %s\n", evdev->name, strerror(errno));
+		FD_CLR(evdev->fd, permset);
+		close(evdev->fd);
+		evdev->fd = -999;
+		return;
+	}
+	
+	if(event.type != EV_KEY)
+		return;
+
+	if(event.code > KEY_MAX || event.code < key_min)
+		return;
+	
+	if(capture_modifiers) {
+		if(event.code == KEY_LEFTCTRL || event.code == KEY_RIGHTCTRL) {
+			evdev->mod.ctrl = !!event.value;
+			return;
+		}
+		if(event.code == KEY_LEFTSHIFT || event.code == KEY_RIGHTSHIFT) {
+			evdev->mod.shift = !!event.value;
+			return;
+		}
+		if(event.code == KEY_LEFTALT || event.code == KEY_RIGHTALT) {
+			evdev->mod.alt = !!event.value;
+			return;
+		}
+		if(event.code == KEY_LEFTMETA || event.code == KEY_RIGHTMETA) {
+			evdev->mod.meta = !!event.value;
+			return;
+		}
+	}
+
+	struct timeval current;
+	gettimeofday(&current, NULL);
+
+	if(evdev->autorepeat_enabled) {
+		if(event.value == 1)
+			autorepeat_press(&evdev->ar,
+			                 event.code,
+			                 autorepeat_delay_ms,
+			                 autorepeat_period_ms,
+			                 &current);
+		else
+			autorepeat_release(&evdev->ar, event.code);
+	}
+
+	if(!event.value)
+		return;
+
+	if(event.code == evdev->previous_event.code &&
+	   time_elapsed(&evdev->previous_input, &current) < repeat_time)
+		evdev->repeat++;
+	else
+		evdev->repeat = 0;
+
+	evdev->previous_input = current;
+	evdev->previous_event = event;
+
+	send_to_clients(evdev, event.code);
+}
+
+static void calculate_timeout(const struct timeval *now,
+                              struct timeval *timeout) {
+	evdev_t *evdev;
+
+	for(evdev = evdevs; evdev; evdev = evdev->next) {
+		if(evdev->autorepeat_enabled && autorepeat_active(&evdev->ar)) {
+			struct timeval t;
+			autorepeat_time_left(&evdev->ar, now, &t);
+			if(timercmp(&t, timeout, <))
+				*timeout = t;
+		}
+	}
+
+	/* Add small delta */
+	struct timeval delta = {0, 1 * 1000};  /* 1 mS */
+	struct timeval r;
+	timeradd(timeout, &delta, &r);
+	*timeout = r;
+}
+
+static bool update_autorepeat(const struct timeval *now) {
+	evdev_t *evdev;
+	bool ret = false;
+
+	for(evdev = evdevs; evdev; evdev = evdev->next) {
+		if(evdev->autorepeat_enabled && autorepeat_active(&evdev->ar)) {
+			ret = true;
+			unsigned int code = autorepeat_poll(&evdev->ar, now);
+			if(code)
+				send_to_clients(evdev, code);
+		}
+	}
+
+	return ret;
 }
 
 static void main_loop(void) {
@@ -412,12 +546,32 @@ static void main_loop(void) {
 	maxfd++;
 	
 	while(true) {
-		fdset = permset;
-		
+		struct timeval evdev_timeout;
+		struct timeval current;
+		struct timeval rescan_time;
 		//wait for 30 secs, then rescan devices
 		evdev_timeout.tv_sec = 30;
+		evdev_timeout.tv_usec = 0;
+
+		gettimeofday(&current, NULL);
+
+		timeradd(&current, &evdev_timeout, &rescan_time);
+		evdev_timeout.tv_sec += 2;
+
+		calculate_timeout(&current, &evdev_timeout);
 		
+		fdset = permset;
 		retselect = select(maxfd, &fdset, NULL, NULL, &evdev_timeout);
+
+		if(retselect < 0) {
+			if(errno != EINTR) {
+				syslog(LOG_ERR, "Error during select(): %s\n",
+				       strerror(errno));
+				rescan_evdevs(&permset);
+			}
+			continue;
+		}
+
 		if(retselect > 0) {
 			for(evdev = evdevs; evdev; evdev = evdev->next)
 				if(FD_ISSET(evdev->fd, &fdset))
@@ -426,17 +580,34 @@ static void main_loop(void) {
 			if(FD_ISSET(sockfd, &fdset))
 				processnewclient();
 		}
-		else {
-			if(retselect < 0) {
-				if(errno == EINTR)
-					continue;
-				syslog(LOG_ERR, "Error during select(): %s\n", strerror(errno));
-			}
+
+		gettimeofday(&current, NULL);
+
+		if(update_autorepeat(&current))
+			continue;
+
+		if(!timercmp(&current, &rescan_time, <))
 			rescan_evdevs(&permset);
-		}
 	}
 }
 
+bool parse_autorepeat_timing(const char *s) {
+	/* delay:period */
+	char *p;
+	long delay = strtol(s, &p, 10);
+
+	if(*p != ':')
+		return false;
+
+	long period = strtol(p + 1, NULL, 10);
+	if(delay > 0 && period > 0) {
+		autorepeat_delay_ms = delay;
+		autorepeat_period_ms = period;
+		return true;
+	}
+
+	return false;
+}
 
 int main(int argc, char *argv[]) {
 	char *user = "nobody";
@@ -444,9 +615,7 @@ int main(int argc, char *argv[]) {
 	int opt, i;
 	bool foreground = false, named = false;
 
-	gettimeofday(&previous_input, NULL);
-
-	while((opt = getopt(argc, argv, "cd:gm:n:fu:r:t:N:")) != -1) {
+	while((opt = getopt(argc, argv, "cd:gm:n:fu:r:t:N:aA:")) != -1) {
 		switch(opt) {
 			case 'd':
 				device = strdup(optarg);
@@ -478,6 +647,13 @@ int main(int argc, char *argv[]) {
 				break;
 			case 'N':
 				rc_name = strdup(optarg);
+				break;
+			case 'a':
+				autorepeat_enabled = true;
+				break;
+			case 'A':
+				autorepeat_enabled = true;
+				parse_autorepeat_timing(optarg);
 				break;
 			default:
 				fprintf(stderr, "Unknown option!\n");
